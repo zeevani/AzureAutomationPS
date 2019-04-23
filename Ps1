@@ -1,0 +1,84 @@
+# Format Volume
+$Disk = Get-Disk -Number 2
+Set-Disk -InputObject $Disk -IsOffline $false
+Initialize-Disk -InputObject $Disk
+New-Partition $Disk.Number -UseMaximumSize -DriveLetter G
+
+Format-Volume -DriveLetter G -FileSystem NTFS -AllocationUnitSize 65536 -NewFileSystemLabel DATA -UseLargeFRS
+
+
+# Import modules
+Import-Module SqlServer -DisableNamechecking
+Import-Module ServerManager
+
+# Install .NET 3.5
+Add-WindowsFeature Net-Framework-Core
+
+# Create folders for SQL Media
+$path = "G:\Installation\SQL_2016_ISO"
+If(!(test-path $path))
+{
+      New-Item -ItemType Directory -Force -Path $path
+}
+
+$path = "G:\Installation\SSMS_Media"
+If(!(test-path $path))
+{
+      New-Item -ItemType Directory -Force -Path $path
+}
+
+# Install SQL ini
+$FilePath = "G:\Installation\SQL_2016_ISO\setup.exe"
+$ArgumentList =  @()
+# $ArgumentList += '/SAPWD="PorkchopExpress"'
+$ArgumentList += '/ConfigurationFile="G:\Installation\SQL_2016_ISO\ConfigurationFile.ini"'
+$ArgumentList += '/IAcceptSqlServerLicenseTerms'
+$ArgumentList += '/QS'
+Start-Process -FilePath $FilePath -ArgumentList $ArgumentList -Wait
+
+# Install SSMS
+# Set file and folder path for SSMS installer .exe
+$folderpath="G:\Installation\SSMS_Media"
+$filepath="$folderpath\SSMS-Setup-ENU.exe"
+#Download SSMS
+write-host "Downloading SQL Server 2016 SSMS..."
+$URL = "https://go.microsoft.com/fwlink/?linkid=2043154"
+$clnt = New-Object System.Net.WebClient
+$clnt.DownloadFile($url,$filepath)
+Write-Host "SSMS installer download complete" -ForegroundColor Green
+# start the SSMS installer
+write-host "Beginning SSMS 2016 install..." -nonewline
+$Parms = " /Install /Quiet /Norestart /Logs log.txt"
+$Prms = $Parms.Split(" ")
+& "$filepath" $Prms | Out-Null
+Write-Host "SSMS installation complete" -ForegroundColor Green
+
+# Open TCP port 1433
+Write-host ========= SQL Server Ports =================== 
+Write-host Enabling SQLServer default instance port 1433
+#netsh firewall set portopening TCP 1433 "SQLServer"
+New-NetFirewallRule -DisplayName "Allow inbound TCP Port 1433" –Direction inbound –LocalPort 1433 -Protocol TCP -Action Allow
+
+New-NetFirewallRule -DisplayName "Allow outbound TCP Port 1433" –Direction outbound –LocalPort 1433 -Protocol TCP -Action Allow
+
+# Open TCP port 2383
+Write-host ========= Analysis Services Ports ==============
+Write-host Enabling SSAS Default Instance port 2383
+#netsh firewall set portopening TCP 2383 "Analysis Services"
+New-NetFirewallRule -DisplayName "Allow inbound TCP Port 2383" -Direction inbound –LocalPort 2383 -Protocol TCP -Action Allow
+
+New-NetFirewallRule -DisplayName "Allow outbound TCP Port 2383" -Direction outbound –LocalPort 2383 -Protocol TCP -Action Allow
+
+
+# Change startup modes
+Set-Service -Name MSSQLServerOLAPService -StartupType Automatic -PassThru
+#Set-Service -Name SSASTELEMETRY -StartupType Automatic -PassThru
+Set-Service -Name SQLBrowser -StartupType Disabled -PassThru
+Set-Service -Name MsDtsServer130 -StartupType Automatic -PassThru
+#Set-Service -Name SSISTELEMETRY130 -StartupType Automatic -PassThru
+
+# File share creation
+New-SMBShare –Name "Data$" –Path "G:\Program Files\Microsoft SQL Server\MSAS13.MSSQLSERVER\OLAP"
+
+# Restart VM
+Restart-VM vmACDEV01 -Force
